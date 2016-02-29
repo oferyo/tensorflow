@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numpy as np
 from tensorflow.models.rnn import rnn, rnn_cell
+import reader as reader
 
 class RNNModel(object):
   """The RNN model."""
@@ -11,14 +12,13 @@ class RNNModel(object):
     num_steps = config.num_steps
     self._input_data = tf.placeholder(tf.float32, (batch_size, config.num_steps))
     self._targets = tf.placeholder(tf.float32, [batch_size, 1])
-    lstm_cell = rnn_cell.BasicLSTMCell(size, forget_bias=2.8)
+    lstm_cell = rnn_cell.BasicLSTMCell(size, forget_bias=2.7)
     # lstm_cell = rnn_cell.LSTMCell(size, 1)
     # cell = lstm_cell
     cell = rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers)
 
     self._initial_state = cell.zero_state(batch_size, tf.float32)
-    self._train_op = tf.no_op()
-    self._result = -1
+
 
     weights_hidden = tf.constant(1.0, shape= [config.num_features, config.n_hidden])
     weights_hidden = tf.get_variable("weights_hidden", [config.num_features, config.n_hidden])
@@ -39,8 +39,8 @@ class RNNModel(object):
     self._pred = pred
 
     self._final_state = states[-1]
-    self._cost = cost = tf.square((pred[:,0] - self.targets[:,0]))
-    self._result = tf.abs(pred[0, 0] - self.targets[0,0])
+    self._cost = cost = tf.reduce_mean(tf.square((pred[:,0] - self.targets[:,0])))
+    self._result = pred[:,0] - self.targets[:,0]
 
     # self._cost = cost = tf.abs(pred[0, 0] - self.targets[0,0])
 
@@ -50,8 +50,6 @@ class RNNModel(object):
     #optimizer = tf.train.GradientDescentOptimizer(learning_rate = config.learning_rate).minimize(cost)
     optimizer = tf.train.AdamOptimizer().minimize(cost)
     self._train_op = optimizer
-    print("top ", self._train_op)
-
 
   def assign_lr(self, session, lr_value):
     session.run(tf.assign(self.lr, lr_value))
@@ -97,11 +95,11 @@ class RNNModel(object):
     return self._result
 
 class BaseConfig(object):
-    batch_size = 1
-    max_epoch = 300000
+    batch_size = 2
+    max_epoch = 100
     init_scale = 0.1
     n_features = 1
-    n_hidden = 5
+    n_hidden = 4
     learning_rate = 0.09
     num_layers = 1
     num_features = 1
@@ -115,43 +113,43 @@ class TestConfig(BaseConfig):
     num_steps = 1
     is_training = False
 
-def run_epoch(session, m, x_data, eval_op, config, state, verbose=False):
-  costs = 0.0
-  iters = 0
-  # state = m.initial_state.eval()
-  #because of the varied length sequence size no batching is done.
-  input_size = len(x_data)
-  y_data = np.zeros(input_size - 1)
-  y_data[0:input_size-1] = x_data[1:input_size]
-  x_data = x_data[0:input_size-1]
-  batch_size = 1
+def run_epoch(session, m, data, eval_op, config, epoch_num, verbose=False):
+  success_inarow = 0
+  max = 0
+  state = m.initial_state.eval()
+  final_step = 0
+  for step, (x, y) in enumerate(reader.ts_iterator(data, m.batch_size,
+                                                    config.num_steps + 1)):
 
-  input_len = len(x_data)
-
-  success = True
-  target = np.reshape(y_data[input_len-1], (config.batch_size, 1))
-  op = tf.no_op()
-  for i in range(0, input_len, config.num_steps):
-      if i == input_len - config.num_steps:
-          op = eval_op
-
-      input_data = np.reshape(x_data[i:i + config.num_steps], (batch_size, config.num_steps))
-      cost, state, pred,result, _ = session.run([m.cost, m.final_state, m.pred, m.result, op],
-                                   {m.targets: target,
-                                    m.input_data : input_data,
+      targets = np.reshape(x[:, -1], (config.batch_size, 1))
+      in_data = x[:, 0:-1]
+      final_step = step
+      cost, pred, result, _ = session.run([m.cost, m.pred, m.result, eval_op],
+                                   {m.targets: targets,
+                                    m.input_data : in_data,
                                     m.initial_state: state})
-  #compare the last item
+      success = result < 0.2
+      if np.sum(success) >= config.batch_size:
+          success_inarow += config.batch_size
+      else:
+          success_inarow = 0
 
-  success = result < 0.2
-  return success, cost, state
+      if step % 50 == 0:
+          print ("cost ", cost, "step", step, "epoch_num", epoch_num)
 
+      if success_inarow >= 256:
+          print ("SUCESS ", step, "num_seq", step * config.batch_size)
+          break
+
+
+  return (final_step + 1) * config.batch_size, success_inarow
 
 def generateTestPattern(T, N, mean, stddev):
     startItem = 1.0
-    endItem = 1.0
+    endItem = 0.2
     if np.random.random_integers(0, 1) == 1:
         startItem = -1.0
-        endItem = 0.0
+        endItem = 0.8
 
     # seq_len = np.random.random_integers(T, T+T/10)
     seq_len = T + 1
@@ -166,8 +164,8 @@ def main(unused_args):
 
   with tf.Graph().as_default(), tf.Session() as session:
     config = BaseConfig()
-    T = 100
-    config.num_steps = 50
+    T = 50
+    config.num_steps = T
     # testConfig = TestConfig()
     initializer = tf.random_normal_initializer(0.0, 1.0, None)
     #initializer = tf.random_uniform_initializer(-config.init_scale, config.init_scale)
@@ -181,32 +179,48 @@ def main(unused_args):
     N = 3
     mean = 0.0
     std = np.sqrt(0.2)
+    total_seq = 0
+    success_inarow = 0
     max = 0
-    state = model.initial_state.eval()
+    finish = False
     for i in range(config.max_epoch):
-        x_data = generateTestPattern(T, N, mean, std)
-        success, cost, state = run_epoch(session, model, x_data, model.train_op, config, model.initial_state.eval())
-
-        if (success):
-            num_succes+=1
-        else:
-            num_succes = 0
-
-        if num_succes > max:
-            max = num_succes
-            print ("NewMax ", max, "i", i)
-
-        if num_succes > 256:
-            print ("END AT ", i)
+        if finish:
             break
+        num_seq = 5000
+        raw_data = np.zeros(num_seq*(T+1))
+        for s in range(num_seq):
+            raw_data[s*(T+1): (s+1)*(T+1)] = generateTestPattern(T, N, mean, std)
+        state = model.initial_state.eval()
 
-        if i % 50 == 0:
-            if x_data[0] == 1.0:
-                print ("            cost 1 ", cost, "i", i, "max", max)
-            else:
-                print ("cost -1 ", cost, "i", i, "max", max)
+        for step, (x, y) in enumerate(reader.ts_iterator(raw_data, config.batch_size,
+                                                            config.num_steps + 1)):
 
+              targets = np.reshape(x[:, -1], (config.batch_size, 1))
+              noisytargets= targets + np.random.normal(0.0, np.square(0.1), (config.batch_size, 1))
+              in_data = x[:, 0:-1]
+              cost, pred, result, _ = session.run([model.cost, model.pred, model.result, model.train_op],
+                                           {model.targets: noisytargets,
+                                            model.input_data : in_data,
+                                            model.initial_state: state})
+              total_seq+= config.batch_size
+              res = pred[:,0] - targets[:,0]
+              success = np.abs(res) < 0.1
+              if np.sum(success) >= config.batch_size:
+                  success_inarow += config.batch_size
+              else:
+                  success_inarow = 0
 
+              if step % 50 == 0:
+                  print ("cost ", cost, "num_seq", total_seq, "max", max, "success", success_inarow)
+
+              if success_inarow > max:
+                  print ("newmax", max)
+                  max = success_inarow
+
+              if success_inarow >= 256:
+                  print ("SUCESS ", step, "num_seq", total_seq)
+                  finish = True
+                  break
 
 if __name__ == "__main__":
   tf.app.run()

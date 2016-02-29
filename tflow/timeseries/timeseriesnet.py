@@ -34,15 +34,6 @@ class RNNModel(object):
 
     self._initial_state = cell.zero_state(batch_size, tf.float32)
 
-    x_debug_test = [2.0,2.0,2.0]
-
-    inputs_debug = []
-    for j in range(size):
-        inputs_debug.append(x_debug_test)
-
-    tensor_debug = tf.constant(inputs_debug, shape=[batch_size,3, size])
-    outputs, states = rnn.rnn(cell, [tensor_debug], initial_state=self._initial_state)
-
     inputs = []
     #weights_hidden = tf.get_variable("weights_hidden", [config.num_features, config.n_hidden])
 
@@ -139,10 +130,10 @@ class BaseConfig(object):
     max_epoch = 300
     init_scale = 0.1
     n_features = 1
-    n_hidden = 11
+    n_hidden = 3
     learning_rate = 0.08
-    num_layers = 2
-    num_steps = 5
+    num_layers = 1
+    num_steps = 100
     num_features = 1
     max_grad_norm = 5
     lr_decay = 0.5
@@ -162,6 +153,7 @@ def run_epoch(session, m, data, eval_op, verbose=False):
                                  {m.input_data: x,
                                   m.targets: y,
                                   m.initial_state: state})
+
 
     if verbose:
         print("x", x[0,0], "y", y[0, 0], "pred", pred[0,0])

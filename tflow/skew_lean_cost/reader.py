@@ -7,7 +7,7 @@ class DataReader(object):
         self.raw_data = []
         conn = pymssql.connect("192.168.122.200", "sa","a:123456a:123456" , "Goldfish")
         cursor = conn.cursor(as_dict=True)
-        num_features = 13
+        num_features = 9
         max_rows = 300000
         if limit < 0:
             sql = 'SELECT  * FROM ExePairs WHERE ExeDate>%s  and ExeDate < %s and Pnl is not null and ExpiryMonthOpen = ExpiryMonthClose and IvPnlClose is not null  and BuyOpen != BuyClose and BidAskWidthMultOpen is not null order by ExeDate'
@@ -31,27 +31,27 @@ class DataReader(object):
             distance = self.distance(row)
             next_batch[ind, 2] = sqrtt
             next_batch[ind, 3] = self.diff_in_iv_point(row, True)
-            next_batch[ind, 4] = self.diff_in_iv_point(row, False)
-            next_batch[ind, 5] = distance
-            next_batch[ind, 6] = np.abs(row[u'VegaOpen'])
-            next_batch[ind, 7] = np.abs(row[u'VegaClose'])
+            #next_batch[ind, 4] = self.diff_in_iv_point(row, False)
+            next_batch[ind, 4] = distance
+            #next_batch[ind, 6] = np.abs(row[u'VegaOpen'])
+            #next_batch[ind, 7] = np.abs(row[u'VegaClose'])
             #next_batch[ind, 8] = np.abs(row[u'ExecutedDelta'])
             # next_batch[ind, 8] = np.abs(row[u'VegaOpen']/)
             vodo = np.abs(row[u'VegaOpen']) / np.abs(row[u'DeltaOpen'])
             vcdc = np.abs(row[u'VegaClose']) / np.abs(row[u'DeltaClose'])
-            next_batch[ind, 8] = vcdc
-            next_batch[ind, 9] = vodo
+            next_batch[ind, 5] = vcdc
+            next_batch[ind, 6] = vodo
             # next_batch[ind, 11] = np.abs(row[u'DeltaClose'])
 
-            next_batch[ind, 10] = row[u'BidAskWidthMultClose']
+            #next_batch[ind, 10] = row[u'BidAskWidthMultClose']
             # next_batch[ind, 11] = row[u'ExecutedDelta']
             hx = np.sqrt((np.abs(vodo-vcdc) ** 2) + (distance**2)*(vcdc**2))
             un_norm = max(hx * np.abs(row[u'ExecutedDelta']), 1e-8)
             if un_norm < 1e-6:
                 continue
             totalRows+=1
-            next_batch[ind, 11] = un_norm
-            next_batch[ind, 12] = (hx**2) * (row[u'ExecutedDelta'] **2)
+            next_batch[ind, 7] = un_norm
+            next_batch[ind, 8] = (hx**2) * (row[u'ExecutedDelta'] **2)
             next_targets[ind ,0] = row[u'Pnl'] / un_norm
             # next_targets[ind ,0] = row[u'Pnl']
             raw_data[raw_ind] = next_batch[ind]

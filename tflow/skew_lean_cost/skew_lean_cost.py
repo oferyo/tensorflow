@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np
 import reader as reader
 import pymssql
-from datetime import date, timedelta, datetime
+from datetime import timedelta, datetime
 class NNModel(object):
 
   def __init__(self, is_training, config):
@@ -73,30 +73,30 @@ def run_epoch(session, data_reader, normalizer, model, config, train_op, mean_ou
     naive_cost = 0
     total_seq = 0
     dynamic_cost = 0
-    total_batches = 0
     sum_gaps = 0
+    sum_gaps_naive = 0
     for step, (x, y) in enumerate(data_reader.date_iterator()):
 
           nx = normalizer.normalize(x)
           ny = normalizer.normalize_out(y)
-          cost_coeff = np.reshape(x[:,12], (config.batch_size,1))
+          cost_coeff = np.reshape(x[:,8], (config.batch_size,1))
           cost, pred, result, _ = session.run([model.cost, model.pred, model.result, train_op],
                                        {model.targets: ny,
                                         model.cost_coeff : cost_coeff,
                                         model.input_data : nx})
-          total_batches+=1
           total_seq+=config.batch_size
           uny = normalizer.de_normalize_out(pred)
           # sqrtt = np.reshape(x[:,2], (config.batch_size,1))
 
-          un_norm =   np.reshape(x[:,11], (config.batch_size,1))
+          un_norm =   np.reshape(x[:,7], (config.batch_size,1))
           gap = np.abs((uny - y) * un_norm)
           # gap = np.abs((uny - y))
 
           sum_gaps+= np.sum(gap)
+          sum_gaps_naive+=np.sum(np.abs(y - mean_out))
           dynamic_cost+= np.sum(np.square(gap)) #undo the sqrtt mult
           naive_cost+= np.sum(np.square((y - mean_out)))
-    return dynamic_cost / naive_cost , sum_gaps, total_seq
+    return dynamic_cost / naive_cost , sum_gaps, total_seq, sum_gaps_naive
 
 def run_configuration(from_date, to_date, out_from_date, out_to_date):
 
@@ -124,8 +124,8 @@ def run_configuration(from_date, to_date, out_from_date, out_to_date):
     # print ("first is ", (cost/naive_cost), "first test", (t_cost/t_naive_cost))
 
     for i in range(max_epoch):
-        in_rss, sum_in, total_seq = run_epoch(session, data_reader_in, data_reader_in, model, config, model.train_op, data_reader_in.mean_out())
-        out_rss, sum_out, total_seq_out = run_epoch(session, data_reader_out, data_reader_in, model, config, tf.no_op(), data_reader_in.mean_out())
+        in_rss, sum_in, total_seq, sum_naive = run_epoch(session, data_reader_in, data_reader_in, model, config, model.train_op, data_reader_in.mean_out())
+        out_rss, sum_out, total_seq_out, sum_naive = run_epoch(session, data_reader_out, data_reader_in, model, config, tf.no_op(), data_reader_in.mean_out())
 
         # if i % 10 == 0:
         #     print ("in", (cost/naive_cost), "out", (t_cost/t_naive_cost), "i", i)
@@ -135,10 +135,10 @@ def run_configuration(from_date, to_date, out_from_date, out_to_date):
             best_sum_out = sum_out
             best_iteration = i
                 # print ("test model ", cost, "ncost ", naive_cost, "relative", cost / naive_cost, "i", i)
-    last_out, last_sum_out, total_seq_out = run_epoch(session, data_reader_out, data_reader_in, model, config, tf.no_op(), data_reader_in.mean_out())
+    last_out, last_sum_out, total_seq_out, sum_naive = run_epoch(session, data_reader_out, data_reader_in, model, config, tf.no_op(), data_reader_in.mean_out())
 
     print ("best_iteration ", best_iteration, "total_sql", total_seq_out)
-    return best_out, best_sum_out, last_out,last_sum_out, in_rss, total_seq_out
+    return best_out, best_sum_out, last_out,last_sum_out, in_rss, total_seq_out, sum_naive
 
 def get_min_date():
     conn = pymssql.connect("192.168.122.200", "sa","a:123456a:123456" , "Goldfish")
@@ -159,13 +159,13 @@ def main(unused_args):
         to_date = from_date + timedelta(days=days_in)
         from_out = to_date + timedelta(hours=1)
         to_out = from_out + timedelta(days=days_out)
-        best_out, best_sum_out, last_out, last_sum_out, last_in, count_out_samples = run_configuration(from_date, to_date, from_out, to_out)
-        print ("best_sum  ", best_sum_out, "  last_sum_out  ", last_sum_out, " last_out ", last_out, "  best_out  ", best_out, "in_rss", last_in, "count_out", count_out_samples, from_out, to_out)
+        best_out, best_sum_out, last_out, last_sum_out, last_in, count_out_samples, sum_naive = run_configuration(from_date, to_date, from_out, to_out)
+        print ("best_sum  ", best_sum_out,  " sum naive ", sum_naive, "  last_sum_out  ", last_sum_out, " last_out ", last_out, "  best_out  ", best_out, "in_rss", last_in, "count_out", count_out_samples, from_out, to_out)
         from_date+= timedelta(days=days_out)
 
 class BaseConfig(object):
     batch_size = 500
-    num_features = 13
+    num_features = 9
     num_hidden = 3
     num_layers = 1
     learning_rate = 0.2

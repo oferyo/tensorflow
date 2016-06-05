@@ -15,7 +15,7 @@ class RNNModel(object):
     num_steps = config.num_steps
     self._input_data = tf.placeholder(tf.float32, (batch_size, config.num_steps, config.num_features))
     self._targets = tf.placeholder(tf.float32, [batch_size, num_steps])
-    lstm_cell = rnn_cell.BasicLSTMCell(size, forget_bias=1.0)
+    lstm_cell = rnn_cell.BasicLSTMCell(size, forget_bias=0.0)
     cell = rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers)
 
     self._initial_state = cell.zero_state(batch_size, tf.float32)
@@ -95,13 +95,13 @@ class BaseConfig(object):
     batch_size = 4
     max_epoch = 100000
     init_scale = 0.1
-    n_hidden = 8
+    n_hidden = 6
     learning_rate = 0.09
     num_layers = 1
-    num_features = 2
+    num_features = 4
     max_grad_norm = 5
     lr_decay = 0.5
-    num_steps = 100
+    num_steps = 500
     is_training = True
 
 class TestConfig(BaseConfig):
@@ -111,31 +111,36 @@ class TestConfig(BaseConfig):
 
 def run_epoch(session, data_reader, model, config, train_op, naive_guess):
     avg_cost = 0
-    naive_cost = 0
+    prod_cost = 0
+
     for step, (x, y) in enumerate(data_reader.ts_iterator(config.batch_size, config.num_steps)):
 
-
+        # sqrtt = x[:,:, 0]
+        naive_pred = naive_guess
         cost, pred, _ = session.run([model.cost, model.pred, train_op],
                                        {model.targets: y,
                                         model.input_data : x})
         avg_cost+=cost
-        naive_cost+=np.mean(np.square(y - naive_guess))
+        prod_cost+=data_reader.get_avg_prod_cost(naive_guess)
 
-    return avg_cost, naive_cost
+    return avg_cost, prod_cost
 
 
 def run_configuration(from_date, to_date, out_from_date, out_to_date):
 
   with tf.Graph().as_default(), tf.Session() as session:
     config = BaseConfig()
-    std = 1.0 / np.sqrt(config.n_hidden)
+    std = 0.5 / np.sqrt(config.n_hidden)
     # std = 0.01
     initializer = tf.random_normal_initializer(0.0, std, None)
-    max_epoch = 200
-    limit = 500
+    max_epoch = 800
+    limit = -1
     data_reader_in = skew_data_reader.DataReader(from_date, to_date)
     data_reader_out = skew_data_reader.DataReader(out_from_date, out_to_date, limit)
 
+    min_rows = config.num_steps * config.batch_size
+    if (data_reader_in.get_total_rows() < min_rows or data_reader_out.get_total_rows() < min_rows):
+        return False, 0,0
     with tf.variable_scope("model", reuse=None, initializer=initializer):
         model = RNNModel(True, config)
 
@@ -144,15 +149,15 @@ def run_configuration(from_date, to_date, out_from_date, out_to_date):
     naive_guess = data_reader_in.naive_avg
     for i in range(max_epoch):
         in_avg_rss, naive_rss = run_epoch(session, data_reader_in, model, config, model.train_op, naive_guess)
-        out_avg_rss, naive_rss  = run_epoch(session, data_reader_out, model, config, tf.no_op(), naive_guess)
+        out_avg_rss, naive__out_rss  = run_epoch(session, data_reader_out, model, config, tf.no_op(), naive_guess)
 
-        if i % 100 == 0:
-            print ("in", (in_avg_rss/naive_rss) , "out", (out_avg_rss/naive_rss) , "i", i)
+        if i % 10 == 0:
+            print ("in", (in_avg_rss/naive_rss) , "out", (out_avg_rss/naive__out_rss) , "i", i)
 
     out_avg_rss, naive_rss = run_epoch(session, data_reader_out, model, config, tf.no_op(), naive_guess)
 
     print ("run_epoch ", (out_avg_rss / naive_rss))
-    return out_avg_rss, naive_rss
+    return True, out_avg_rss, naive_rss
 
 def get_min_date():
     conn = pymssql.connect("192.168.122.200", "sa","a:123456a:123456" , "Goldfish")
@@ -164,8 +169,7 @@ def get_min_date():
     return datetime.min
 
 def main(unused_args):
-
-    days_in = 40
+    days_in = 15
     days_out = 10
     from_date = get_min_date()
 
@@ -173,11 +177,10 @@ def main(unused_args):
         to_date = from_date + timedelta(days=days_in)
         from_out = to_date + timedelta(hours=1)
         to_out = from_out + timedelta(days=days_out)
-        rss, n_rss = run_configuration(from_date, to_date, from_out, to_out)
-        print ("rss_ratio  ", rss/n_rss, from_out, to_out)
+        success, rss, n_rss = run_configuration(from_date, to_date, from_out, to_out)
+        if success:
+            print ("rss_ratio  ", rss/n_rss, from_out, to_out)
         from_date+= timedelta(days=days_out)
-
-
 
 if __name__ == "__main__":
   tf.app.run()

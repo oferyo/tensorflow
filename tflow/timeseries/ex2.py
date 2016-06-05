@@ -19,6 +19,7 @@ class RNNModel(object):
 
     self._initial_state = cell.zero_state(batch_size, tf.float32)
 
+    vocab_size = 10
 
     weights_hidden = tf.constant(1.0, shape= [config.num_features, config.n_hidden])
     weights_hidden = tf.get_variable("weights_hidden", [config.num_features, config.n_hidden])
